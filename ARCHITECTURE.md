@@ -1,160 +1,160 @@
-# Arquitectura de kube-bug-agent
+# kube-bug-agent Architecture
 
-Prototipo Rust para observar incidentes de aplicaciones y Deployments de
-Kubernetes, conservar evidencia en SQLite y proponer un diagnostico con un LLM.
-Un fallo observable es un hecho; una causa sugerida por el modelo es una
-hipotesis. El agente no ejecuta comandos del modelo ni modifica el cluster.
+A Rust prototype that observes incidents in applications and Kubernetes
+Deployments, retains evidence in SQLite, and proposes a diagnosis using an LLM.
+An observable failure is a fact; a cause suggested by the model is a hypothesis.
+The agent does not execute model commands or modify the cluster.
 
-## Procesos
+## Processes
 
-Un mismo binario tiene dos modos de servicio:
+The same binary provides two service modes:
 
-- `sidecar`: lee logs JSONL desde un volumen compartido, comprueba opcionalmente
-  un endpoint HTTP local y entrega observaciones al colector.
-- `collector`: recibe observaciones, consulta Kubernetes por namespace y
-  etiqueta, persiste incidentes y ejecuta analisis pendientes.
+- `sidecar`: reads JSONL logs from a shared volume, optionally checks a local
+  HTTP endpoint, and delivers observations to the collector.
+- `collector`: receives observations, queries Kubernetes by namespace and
+  label, persists incidents, and runs pending analyses.
 
-El colector vive fuera del pod observado para poder detectar fallos que impiden
-su arranque, como problemas de imagen, scheduling o creacion del ReplicaSet.
-El ejemplo usa un unico colector StatefulSet con PVC. SQLite no se comparte
-entre multiples replicas escritoras.
-
-```text
-Aplicacion -> JSONL -> Sidecar -> outbox SQLite -> HTTP -> Colector
-                                                           |
-Kubernetes API -> pods / replicasets / deployments / events -+
-                                                           |
-                                                           v
-                                                   Incidentes SQLite
-                                                           |
-                                                           v
-                                                 LLM -> Diagnostico
-```
-
-## Capas
-
-Las dependencias apuntan hacia dentro:
+The collector runs outside the observed pod so it can detect failures that
+prevent startup, such as image, scheduling, or ReplicaSet creation problems.
+The example uses a single collector StatefulSet with a PVC. SQLite is not shared
+between multiple writer replicas.
 
 ```text
-CLI / Adaptadores -> Aplicacion -> Puertos / Dominio
-Puertos -> contratos con tipos de dominio y consultas de aplicacion
-Dominio -> ninguna otra capa del proyecto
+Application -> JSONL -> Sidecar -> SQLite outbox -> HTTP -> Collector
+                                                             |
+Kubernetes API -> pods / replicasets / deployments / events ---+
+                                                             |
+                                                             v
+                                                       SQLite incidents
+                                                             |
+                                                             v
+                                                       LLM -> Diagnosis
 ```
 
-| Directorio | Responsabilidad |
+## Layers
+
+Dependencies point inward:
+
+```text
+CLI / Adapters -> Application -> Ports / Domain
+Ports -> contracts using domain types and application queries
+Domain -> no other project layer
+```
+
+| Directory | Responsibility |
 | --- | --- |
-| `src/domain` | Agregado, objetos de valor, identidad e invariantes |
-| `src/application` | Casos de uso, consultas y reglas de deteccion de logs |
-| `src/ports` | Contratos de persistencia, observacion, entrega y diagnostico |
-| `src/adapters` | SQLite, HTTP, Kubernetes, archivos, senales y LLM |
-| `src/cli` | Configuracion de entrada y composicion de dependencias |
+| `src/domain` | Aggregate, value objects, identity, and invariants |
+| `src/application` | Use cases, queries, and log detection rules |
+| `src/ports` | Persistence, observation, delivery, and diagnosis contracts |
+| `src/adapters` | SQLite, HTTP, Kubernetes, files, signals, and LLM |
+| `src/cli` | Input configuration and dependency composition |
 
-Cada archivo Rust tiene un tipo principal: struct, enum o trait. Los modulos de
-exportacion y auxiliares de validacion no anaden una segunda responsabilidad.
-Los DTO se usan en las fronteras HTTP y LLM. El adaptador JSON convierte cada
-linea a `ApplicationLog`, `LogLevel` y `HttpStatus`; `LogDetector` recibe esos
-tipos y no conoce el formato del archivo.
+Each Rust file has one primary type: a struct, enum, or trait. Export modules
+and validation helpers do not add a second responsibility. DTOs are used at HTTP
+and LLM boundaries. The JSON adapter converts each line into `ApplicationLog`,
+`LogLevel`, and `HttpStatus`; `LogDetector` receives those types and does not know
+the file format.
 
-## Modelo de dominio
+## Domain Model
 
-El contexto es la investigacion de incidentes de un workload desplegado.
+The context is incident investigation for a deployed workload.
 
-- `Workload` identifica namespace, Deployment, revision, pod y contenedor con
-  objetos de valor distintos; no se intercambian strings sin validar.
-- `Observation` describe un hecho con ID, instante, detector, severidad,
-  `ErrorSignature` y `Evidence`. Las evidencias tienen un limite de tamano y
-  filtrado preventivo de credenciales.
-- `Incident` es la raiz del agregado. Agrupa observaciones por namespace,
-  propietario, revision, contenedor, detector y firma normalizada.
-- `Diagnosis` contiene resumen, causa sospechada, confianza, comprobaciones y
-  referencias a la evidencia. Una referencia inventada se rechaza.
+- `Workload` identifies the namespace, Deployment, revision, pod, and container
+  using distinct value objects; unvalidated strings are not passed around.
+- `Observation` describes a fact with an ID, timestamp, detector, severity,
+  `ErrorSignature`, and `Evidence`. Evidence has a size limit and preventive
+  credential redaction.
+- `Incident` is the aggregate root. It groups observations by namespace, owner,
+  revision, container, detector, and normalized signature.
+- `Diagnosis` contains a summary, suspected cause, confidence, checks, and
+  evidence references. Fabricated references are rejected.
 
-El fingerprint usa el UID del Deployment; si falta, usa el UID del pod. Una
-nueva revision produce otro incidente. Las ocurrencias tienen IDs idempotentes:
-repetir el mismo contenido no aumenta el contador, y reutilizar un ID con otro
-contenido produce un conflicto.
+The fingerprint uses the Deployment UID; if absent, it uses the pod UID.
+A new revision produces another incident. Occurrences have idempotent IDs:
+repeating the same content does not increase the counter, and reusing an ID with
+different content produces a conflict.
 
-El agregado conserva el primer evento para el analisis. Las siguientes
-ocurrencias actualizan contador e intervalos y se almacenan por separado.
-Las transiciones de analisis pertenecen al agregado, no al adaptador LLM:
+The aggregate retains the first event for analysis. Subsequent occurrences
+update the counter and time intervals and are stored separately. Analysis
+transitions belong to the aggregate, not the LLM adapter:
 
 ```text
 Pending -> Processing -> Complete
                |
-               +-> Pending (reintento con espera creciente)
-               +-> Failed  (tercer intento)
+               +-> Pending (retry with increasing backoff)
+               +-> Failed  (third attempt)
 ```
 
-Al reabrir SQLite, un trabajo `Processing` se recupera para reintento o se marca
-fallido si ya consumio el ultimo intento. El fallo del modelo nunca elimina la
-observacion original.
+When SQLite is reopened, `Processing` work is recovered for retry or marked
+failed if it has already used its last attempt. A model failure never deletes
+the original observation.
 
-## Puertos y casos de uso
+## Ports and Use Cases
 
-| Puerto | Adaptador inicial |
+| Port | Initial Adapter |
 | --- | --- |
 | `IncidentRepository` | `SqliteIncidentRepository` |
 | `DiagnosisProvider` | `OpenAiDiagnosisProvider` |
-| `ObservationSource` | `KubernetesSource` o `FixtureSource` |
+| `ObservationSource` | `KubernetesSource` or `FixtureSource` |
 | `ObservationSink` | `HttpObservationSink` |
 | `ObservationOutbox` | `SqliteOutbox` |
 
-Los casos de uso reciben los puertos por inyeccion de dependencias:
+Use cases receive ports through dependency injection:
 
-- `IngestIncident`: registra una observacion de manera idempotente.
-- `CollectIncidents`: recoge una instantanea de la fuente y persiste hallazgos.
-- `AnalyzeIncident`: reclama un incidente pendiente, solicita el diagnostico y
-  guarda el resultado o el fallo de analisis.
-- `FlushOutbox`: entrega pendientes y elimina cada elemento solo tras recibir
-  una confirmacion valida del destino.
+- `IngestIncident`: records an observation idempotently.
+- `CollectIncidents`: collects a source snapshot and persists findings.
+- `AnalyzeIncident`: claims a pending incident, requests a diagnosis, and saves
+  the result or analysis failure.
+- `FlushOutbox`: delivers pending items and removes each one only after receiving
+  a valid acknowledgment from the sink.
 
-## Flujos y persistencia
+## Workflows and Persistence
 
-El sidecar guarda en una transaccion el hallazgo y el cursor del archivo. Cuando
-la cola se llena, no avanza el cursor. El colector confirma la ingesta despues
-del commit de incidente y ocurrencia. Si se pierde la respuesta HTTP, el sidecar
-reintenta y el ID del evento evita contar dos veces la misma observacion.
+The sidecar saves the finding and file cursor in one transaction. When the queue
+is full, it does not advance the cursor. The collector acknowledges ingestion
+after committing the incident and occurrence. If the HTTP response is lost, the
+sidecar retries, and the event ID prevents counting the same observation twice.
 
-El colector consulta pods, ReplicaSets, Deployments y eventos Warning. Relaciona
-propietarios por UID y referencias controller, no por nombres parecidos. Con la
-observacion Kubernetes activada, enriquece la identidad del sidecar usando su
-UID de pod; devuelve un error reintentable mientras esa identidad no esta lista.
+The collector queries pods, ReplicaSets, Deployments, and Warning events. It
+correlates owners by UID and controller references, not similar names. When
+Kubernetes observation is enabled, it enriches the sidecar identity using its
+pod UID; it returns a retryable error while that identity is not ready.
 
-SQLite usa WAL y transacciones para las tablas `incidents` y `occurrences`. El
-outbox del sidecar es otra base de datos. Ambos procesos atienden `SIGTERM` y
-Ctrl+C; el sidecar dispone de tres segundos para intentar una ultima entrega.
+SQLite uses WAL and transactions for the `incidents` and `occurrences` tables.
+The sidecar outbox is a separate database. Both processes handle `SIGTERM` and
+Ctrl+C; the sidecar has three seconds to attempt a final delivery.
 
-## Conector y seguridad
+## Connector and Security
 
-El conector utiliza `/v1/models` para descubrir el modelo cuando no se configura
-uno y `/v1/chat/completions` con JSON mode. Valida el esquema, los objetos de
-valor, el motivo de finalizacion y las referencias de evidencia. Tiene timeout,
-limite de respuesta y no sigue redirecciones. Los cuerpos de error del proveedor
-no se exponen como mensajes de diagnostico.
+The connector uses `/v1/models` to discover the model when none is configured,
+and `/v1/chat/completions` with JSON mode. It validates the schema, value objects,
+finish reason, and evidence references. It has a timeout and response limit,
+and does not follow redirects. Provider error bodies are not exposed as
+diagnostic messages.
 
-Los logs son entrada no confiable, tambien dentro del prompt. El modelo no
-tiene herramientas. El filtrado de credenciales es una proteccion preventiva,
-no una garantia de anonimizar datos de produccion.
+Logs are untrusted input, including inside the prompt. The model has no tools.
+Credential redaction is a preventive measure, not a guarantee that production
+data will be anonymized.
 
-`AGENT_TOKEN` protege `/v1/*` y es obligatorio fuera de loopback. Los probes
-`/healthz` y `/readyz` no requieren token. El manifiesto usa RBAC de lectura
-limitado a un namespace; el sidecar no necesita credenciales de Kubernetes.
+`AGENT_TOKEN` protects `/v1/*` and is required outside loopback. The `/healthz`
+and `/readyz` probes do not require a token. The manifest uses read-only RBAC
+scoped to one namespace; the sidecar does not need Kubernetes credentials.
 
-## Verificacion y limites
+## Verification and Limitations
 
-El mitigador `backpressure-agent` es otro binario y un contexto independiente
-en `src/backpressure`, con sus propias capas de dominio, aplicacion, puertos y
-adaptadores. Controla Envoy, no modifica el investigador ni su RBAC. La politica
-y los limites de actuacion estan en [BACKPRESSURE.md](BACKPRESSURE.md).
+The `backpressure-agent` mitigator is a separate binary and an independent
+context in `src/backpressure`, with its own domain, application, ports, and
+adapters. It controls Envoy and does not modify the investigator or its RBAC.
+The policy and actuation limits are described in [BACKPRESSURE.md](BACKPRESSURE.md).
 
-`make ci` comprueba dependencias entre capas, un tipo principal por archivo,
-formato, Clippy y cobertura de lineas >=80%, sin excluir capas de produccion.
-Los tests cubren invariantes, SQLite real, servidores HTTP locales, Kubernetes
-simulado, reintentos, backpressure, rotacion, probes y apagado del binario.
-`make smoke-local` anade inferencia real con un modelo instalado localmente.
+`make ci` checks dependencies between layers, one primary type per file,
+formatting, Clippy, and line coverage >=80%, without excluding production layers.
+Tests cover invariants, real SQLite, local HTTP servers, simulated Kubernetes,
+retries, backpressure, rotation, probes, and binary shutdown. `make smoke-local`
+adds real inference using a locally installed model.
 
-El prototipo usa polling y puede perder estados breves. Rotaciones multiples o
-truncados entre lecturas pueden perder logs. Una cola en `emptyDir` desaparece
-con el pod. No hay resolucion automatica, retencion, HA ni validacion de un
-despliegue real en Kubernetes. Las instrucciones operativas estan en
+The prototype uses polling and can miss short-lived states. Multiple rotations
+or truncations between reads can lose logs. A queue in `emptyDir` disappears
+with the pod. There is no automatic resolution, retention, HA, or validation of
+a real Kubernetes deployment. Operational instructions are in
 [README.md](README.md).
