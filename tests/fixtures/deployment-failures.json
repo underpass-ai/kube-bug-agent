@@ -1,0 +1,245 @@
+{
+  "deployments": [
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "orders",
+        "uid": "deployment-1",
+        "namespace": "demo",
+        "creationTimestamp": "2026-10-01T00:00:00Z",
+        "labels": {
+          "bug-agent.io/enabled": "true"
+        },
+        "generation": 2,
+        "annotations": {
+          "deployment.kubernetes.io/revision": "2"
+        }
+      },
+      "spec": {
+        "replicas": 3,
+        "selector": {
+          "matchLabels": {
+            "app": "orders"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "orders"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "app",
+                "image": "demo:v2"
+              }
+            ]
+          }
+        }
+      },
+      "status": {
+        "observedGeneration": 2,
+        "conditions": [
+          {
+            "type": "Progressing",
+            "status": "False",
+            "reason": "ProgressDeadlineExceeded",
+            "message": "ReplicaSet orders-v2 failed to become available",
+            "lastTransitionTime": "2026-10-01T00:10:00Z"
+          }
+        ]
+      }
+    }
+  ],
+  "replica_sets": [
+    {
+      "apiVersion": "apps/v1",
+      "kind": "ReplicaSet",
+      "metadata": {
+        "name": "orders-v2",
+        "uid": "replicaset-1",
+        "namespace": "demo",
+        "creationTimestamp": "2026-10-01T00:00:00Z",
+        "labels": {
+          "bug-agent.io/enabled": "true"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "name": "orders",
+            "uid": "deployment-1",
+            "controller": true,
+            "blockOwnerDeletion": true
+          }
+        ],
+        "annotations": {
+          "deployment.kubernetes.io/revision": "2"
+        }
+      }
+    }
+  ],
+  "pods": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "orders-oom",
+        "uid": "pod-1",
+        "namespace": "demo",
+        "creationTimestamp": "2026-10-01T00:00:00Z",
+        "labels": {
+          "bug-agent.io/enabled": "true"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "kind": "ReplicaSet",
+            "name": "orders-v2",
+            "uid": "replicaset-1",
+            "controller": true,
+            "blockOwnerDeletion": true
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "containerStatuses": [
+          {
+            "name": "app",
+            "image": "demo:v2",
+            "imageID": "demo@sha256:123",
+            "ready": false,
+            "restartCount": 3,
+            "state": {
+              "waiting": {
+                "reason": "CrashLoopBackOff"
+              }
+            },
+            "lastState": {
+              "terminated": {
+                "exitCode": 137,
+                "reason": "OOMKilled",
+                "finishedAt": "2026-10-01T00:05:00Z"
+              }
+            }
+          }
+        ],
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "False",
+            "reason": "ContainersNotReady",
+            "message": "Application container is not ready",
+            "lastTransitionTime": "2026-10-01T00:05:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "orders-image",
+        "uid": "pod-2",
+        "namespace": "demo",
+        "creationTimestamp": "2026-10-01T00:00:00Z",
+        "labels": {
+          "bug-agent.io/enabled": "true"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "kind": "ReplicaSet",
+            "name": "orders-v2",
+            "uid": "replicaset-1",
+            "controller": true,
+            "blockOwnerDeletion": true
+          }
+        ]
+      },
+      "status": {
+        "phase": "Pending",
+        "containerStatuses": [
+          {
+            "name": "app",
+            "image": "demo:v2",
+            "imageID": "demo@sha256:123",
+            "ready": false,
+            "restartCount": 3,
+            "state": {
+              "waiting": {
+                "reason": "ImagePullBackOff"
+              }
+            },
+            "lastState": {}
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "orders-pending",
+        "uid": "pod-3",
+        "namespace": "demo",
+        "creationTimestamp": "2026-10-01T00:00:00Z",
+        "labels": {
+          "bug-agent.io/enabled": "true"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "kind": "ReplicaSet",
+            "name": "orders-v2",
+            "uid": "replicaset-1",
+            "controller": true,
+            "blockOwnerDeletion": true
+          }
+        ]
+      },
+      "status": {
+        "phase": "Pending",
+        "conditions": [
+          {
+            "type": "PodScheduled",
+            "status": "False",
+            "reason": "Unschedulable",
+            "message": "Insufficient memory",
+            "lastTransitionTime": "2026-10-01T00:01:00Z"
+          }
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "apiVersion": "v1",
+      "kind": "Event",
+      "metadata": {
+        "name": "orders-warning",
+        "uid": "event-1",
+        "namespace": "demo",
+        "creationTimestamp": "2026-10-01T00:00:00Z",
+        "labels": {
+          "bug-agent.io/enabled": "true"
+        }
+      },
+      "type": "Warning",
+      "reason": "FailedCreate",
+      "count": 1,
+      "message": "pods could not be created: exceeded quota",
+      "lastTimestamp": "2026-10-01T00:10:00Z",
+      "involvedObject": {
+        "apiVersion": "apps/v1",
+        "kind": "ReplicaSet",
+        "name": "orders-v2",
+        "namespace": "demo",
+        "uid": "replicaset-1"
+      }
+    }
+  ]
+}

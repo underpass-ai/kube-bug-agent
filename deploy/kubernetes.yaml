@@ -1,0 +1,220 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bug-demo
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bug-agent
+  namespace: bug-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bug-agent-reader
+  namespace: bug-demo
+rules:
+  - apiGroups: [""]
+    resources: [pods, events]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bug-agent-reader
+  namespace: bug-demo
+subjects:
+  - kind: ServiceAccount
+    name: bug-agent
+    namespace: bug-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bug-agent-reader
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bug-agent-llm
+  namespace: bug-demo
+data:
+  # Replace with an OpenAI-compatible endpoint reachable from the collector pod.
+  LLM_BASE_URL: http://llm.default.svc.cluster.local:8080/v1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bug-agent
+  namespace: bug-demo
+spec:
+  selector:
+    app: bug-agent
+  ports:
+    - name: http
+      port: 8787
+      targetPort: 8787
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: bug-agent
+  namespace: bug-demo
+spec:
+  serviceName: bug-agent
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bug-agent
+  template:
+    metadata:
+      labels:
+        app: bug-agent
+    spec:
+      serviceAccountName: bug-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: collector
+          image: kube-bug-agent:0.1.0
+          imagePullPolicy: IfNotPresent
+          args: [collector, --database, /data/incidents.db, --listen, "0.0.0.0:8787", --namespace, bug-demo, --disable-thinking]
+          envFrom:
+            - configMapRef:
+                name: bug-agent-llm
+          env:
+            - name: AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bug-agent-auth
+                  key: token
+          ports:
+            - containerPort: 8787
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8787
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8787
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: database
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: database
+      spec:
+        accessModes: [ReadWriteOnce]
+        # Choose a block-backed StorageClass, not NFS, for SQLite WAL.
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+  namespace: bug-demo
+  labels:
+    bug-agent.io/enabled: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orders
+  template:
+    metadata:
+      labels:
+        app: orders
+        bug-agent.io/enabled: "true"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      initContainers:
+        - name: bug-agent
+          restartPolicy: Always
+          image: kube-bug-agent:0.1.0
+          imagePullPolicy: IfNotPresent
+          args: [sidecar, --logs, /logs/app.jsonl, --spool, /spool/outbox.db]
+          env:
+            - name: COLLECTOR_URL
+              value: http://bug-agent.bug-demo.svc.cluster.local:8787
+            - name: DEPLOYMENT_NAME
+              value: orders
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bug-agent-auth
+                  key: token
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: logs
+              mountPath: /logs
+              readOnly: true
+            - name: spool
+              mountPath: /spool
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: [sh, -c]
+          args:
+            - |
+              while true; do
+                printf '{"level":"error","message":"database connection timeout"}\n' >> /logs/app.jsonl
+                sleep 10
+              done
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: logs
+              mountPath: /logs
+      volumes:
+        - name: logs
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: spool
+          emptyDir:
+            sizeLimit: 64Mi

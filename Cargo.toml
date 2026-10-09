@@ -1,0 +1,32 @@
+[package]
+name = "kube-bug-agent"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Kubernetes incident sidecar with SQLite and an OpenAI-compatible LLM connector"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+k8s-openapi = { version = "0.28", features = ["v1_33"] }
+kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "ring"] }
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }

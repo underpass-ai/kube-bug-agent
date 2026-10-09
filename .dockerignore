@@ -1,0 +1,6 @@
+target
+tmp
+data
+.git
+.env*
+artifacts

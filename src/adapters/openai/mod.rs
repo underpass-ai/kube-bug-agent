@@ -1,0 +1,2 @@
+mod openai_diagnosis_provider;
+pub use openai_diagnosis_provider::OpenAiDiagnosisProvider;
