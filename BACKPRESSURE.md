@@ -1,98 +1,98 @@
-# Agente de mitigacion de backpressure
+# Backpressure Mitigation Agent
 
-`backpressure-agent` es un proceso independiente del investigador
-`kube-bug-agent`. Supervisa un cluster HTTP de Envoy y ajusta su limite de
-peticiones simultaneas. No modifica Deployments, etiquetas o dependencias,
-ni necesita credenciales de Kubernetes. No usa el LLM en el control de trafico;
-el investigador conserva su conector OpenAI API y sus permisos de lectura.
+`backpressure-agent` is a process independent of the `kube-bug-agent`
+investigator. It monitors an Envoy HTTP cluster and adjusts its concurrent
+request limit. It does not modify Deployments, labels, or dependencies, and does
+not require Kubernetes credentials. It does not use the LLM for traffic control;
+the investigator retains its OpenAI API connector and read-only permissions.
 
-## Flujo
+## Workflow
 
 ```text
-Clientes -> Envoy -> backend protegido
+Clients -> Envoy -> protected backend
               ^
-              | limite max_requests, comprobado despues de escribir
-       backpressure-agent -> SQLite: evidencia, decision y resultado
+              | max_requests limit, checked after writing
+       backpressure-agent -> SQLite: evidence, decision, and outcome
               ^
-              | contadores e histograma p95 de Envoy
+              | Envoy counters and p95 histogram
 ```
 
-El trafico que evita Envoy no queda protegido. El limite es por instancia de
-Envoy, no una cuota global para varias replicas. La primera version controla
-admission de peticiones: el exceso recibe HTTP 503 y `x-envoy-overloaded`.
-Eso es rechazo controlado de carga, no una cola durable de peticiones. Para
-propagar backpressure al origen, los clientes deben reducir su ritmo y aplicar
-reintentos acotados con backoff y jitter, respetando la idempotencia.
+Traffic that bypasses Envoy is not protected. The limit applies per Envoy
+instance, not as a global quota across replicas. This first version controls
+request admission: excess requests receive HTTP 503 and `x-envoy-overloaded`.
+This is controlled load shedding, not a durable request queue. To propagate
+backpressure to the source, clients must reduce their rate and use bounded
+retries with backoff and jitter, respecting idempotency.
 
-## Politica
+## Policy
 
-- La primera muestra establece una linea base, sin modificar limites.
-- Se calculan diferencias de contadores, no porcentajes acumulados desde el
-  arranque. Las respuestas locales de sobrecarga se separan de los fallos del
-  backend; los timeouts no se cuentan dos veces.
-- Con suficientes respuestas nuevas, un ratio de errores >=10% o p95 >=200 ms
-  reduce el limite a la mitad, hasta el minimo configurado.
-- Tres ventanas consecutivas sin fallos y con p95 <150 ms permiten subir una
-  unidad, hasta el maximo. La recuperacion requiere latencia disponible.
-- El cooldown inicial es cinco segundos. Trafico insuficiente, muestras sin
-  avance temporal y reinicios de contadores no autorizan una recuperacion.
-- Una muestra ausente o invalida no equivale a salud. Se conserva el ultimo
-  limite conocido y se registra el error en stderr.
+- The first sample establishes a baseline without changing limits.
+- Counter deltas are calculated, not percentages accumulated since startup.
+  Local overload responses are separated from backend failures; timeouts are
+  not counted twice.
+- With enough new responses, an error ratio >=10% or p95 >=200 ms halves the
+  limit, down to the configured minimum.
+- Three consecutive failure-free windows with p95 <150 ms allow an increase
+  of one, up to the maximum. Recovery requires available latency data.
+- The default cooldown is five seconds. Insufficient traffic, samples without
+  timestamp advancement, and counter resets do not authorize recovery.
+- A missing or invalid sample does not indicate health. The last known limit
+  is retained and the error is logged to stderr.
 
-Estos valores son ejemplos conservadores, no una garantia de disponibilidad.
-Hay que ajustarlos al presupuesto de latencia, capacidad y volumen del backend.
-No se reinician Pods ni se escala la aplicacion ante cada rechazo.
+These values are conservative examples, not an availability guarantee. Adjust
+them to the backend latency budget, capacity, and traffic volume. Pods are not
+restarted and the application is not scaled in response to each rejection.
 
-## Puertos y adaptadores
+## Ports and Adapters
 
-El contexto vive en `src/backpressure`, con un tipo principal por archivo:
+The context lives in `src/backpressure`, with one primary type per file:
 
-| Capa | Responsabilidad |
+| Layer | Responsibility |
 | --- | --- |
-| Dominio | `BackpressureController`, politica, ventanas, decisiones y valores validados |
-| Aplicacion | `ControlBackpressure`: observar, auditar, actuar y verificar |
-| `PressureSource` | Lectura de senales de presion |
-| `ConcurrencyActuator` | Lectura y cambio del limite del backend seleccionado |
-| `DecisionRepository` | Intenciones y resultados persistidos |
-| Adaptadores | Envoy admin HTTP y SQLite WAL |
-| CLI | Configuracion y composicion del proceso separado |
+| Domain | `BackpressureController`, policy, windows, decisions, and validated values |
+| Application | `ControlBackpressure`: observe, audit, actuate, and verify |
+| `PressureSource` | Read pressure signals |
+| `ConcurrencyActuator` | Read and change the selected backend limit |
+| `DecisionRepository` | Persisted intents and outcomes |
+| Adapters | Envoy admin HTTP and SQLite WAL |
+| CLI | Configuration and composition of the separate process |
 
-Los campos de CLI y JSON se convierten a `BackendName`, `ConcurrencyLimit`,
-`Latency`, `Ratio`, `RequestCount` y `WindowCount` antes de entrar en el dominio.
-La lista de claves modificables no procede de un prompt: solo se escribe
-`circuit_breakers.<cluster>.default.max_requests`.
+CLI and JSON fields are converted into `BackendName`, `ConcurrencyLimit`,
+`Latency`, `Ratio`, `RequestCount`, and `WindowCount` before entering the domain.
+The list of writable keys does not come from a prompt: only
+`circuit_breakers.<cluster>.default.max_requests` is written.
 
-## Seguridad y fallos
+## Security and Failures
 
-El endpoint admin solo admite una IP loopback HTTP literal, sin credenciales,
-query ni ruta base. No se siguen redirecciones, se ignoran proxies de entorno y
-las respuestas estan acotadas a 1 MiB, con timeout de dos segundos. No se expone
-un servidor de administracion del agente a la red.
+The admin endpoint only accepts HTTP URLs with a literal loopback IP, without
+credentials, a query, or a base path. Redirects are not followed, environment
+proxies are ignored, and responses are capped at 1 MiB with a two-second timeout.
+The agent does not expose an administration server to the network.
 
-La configuracion de Envoy contiene `admin_layer`, una clave inicial explicita,
-`stats_flush_on_admin: true` y el flag de compatibilidad que incluye los rechazos
-de peticiones activas en `upstream_rq_pending_overflow`. No cambiar estos
-ajustes sin adaptar y verificar la lectura de metricas. Solo este controlador
-debe consumir las ventanas del histograma y escribir la clave de runtime.
+The Envoy configuration includes `admin_layer`, an explicit initial key,
+`stats_flush_on_admin: true`, and the compatibility flag that includes active
+request rejections in `upstream_rq_pending_overflow`. Do not change these settings
+without adapting and verifying metric collection. Only this controller should
+consume histogram windows and write the runtime key.
 
-Antes de actuar se persiste una intencion `pending`. Se comprueba que el limite
-no haya cambiado externamente, se escribe y se verifica su lectura. El resultado
-queda como `applied`, `observed`, `dry_run` o `failed`. Un fallo de auditoria antes
-de actuar bloquea el cambio. Una interrupcion entre escritura y confirmacion
-puede dejar una intencion `pending`: no se reejecuta a ciegas al arrancar.
+A `pending` intent is persisted before actuation. The limit is checked for
+external changes, written, and read back for verification. The outcome is
+recorded as `applied`, `observed`, `dry_run`, or `failed`. An audit failure before
+actuation blocks the change. An interruption between writing and confirmation
+can leave a `pending` intent: it is not blindly replayed at startup.
 
-Envoy admin no ofrece compare-and-swap atomico: la comprobacion previa detecta
-parte de los conflictos, pero requiere un unico escritor. Si falla la respuesta
-de una escritura, el estado puede ser incierto; revisar runtime e historial.
-No se promete rollback transaccional entre SQLite y Envoy.
+Envoy admin does not offer atomic compare-and-swap: the precondition check
+detects some conflicts, but requires a single writer. If the response to a write
+fails, the state may be uncertain; inspect runtime and history. Transactional
+rollback between SQLite and Envoy is not promised.
 
-Al recibir SIGTERM o Ctrl+C, el proceso sale y conserva el limite protector;
-no lo eleva automaticamente durante una caida. Los overrides admin se pierden
-si reinicia Envoy, que recupera el valor inicial del bootstrap. Un nuevo agente
-empieza con una nueva linea base. El despliegue de ejemplo usa una replica y
-`Recreate`; aun no hay coordinacion multiagente ni retencion de auditoria.
+On SIGTERM or Ctrl+C, the process exits and retains the protective limit;
+it does not automatically raise it during an outage. Admin overrides are lost
+if Envoy restarts, restoring the initial bootstrap value. A new agent starts
+with a new baseline. The example deployment uses one replica and `Recreate`;
+there is no multi-agent coordination or audit retention yet.
 
-## Prueba local
+## Local Test
 
 ```sh
 make ci
@@ -100,15 +100,16 @@ docker pull envoyproxy/envoy:v1.39.3
 make smoke-backpressure
 ```
 
-La prueba arranca un backend HTTP saturable y Envoy real en puertos loopback
-libres. Genera rafagas, exige reduccion 8 -> 4 -> 2, comprueba que desaparezcan
-los fallos del backend y que el exceso sea rechazado. Despues exige recuperacion
-gradual a 3. Los procesos y scratch se limpian al salir; el informe queda en
-`artifacts/backpressure-smoke.json`. No se incluye esta prueba Docker en el gate
-de cobertura; los tests normales cubren dominio, HTTP real, SQLite y SIGTERM.
+The test starts an HTTP backend that can be saturated and real Envoy on free
+loopback ports. It generates bursts, requires a reduction from 8 -> 4 -> 2,
+checks that backend failures disappear and excess requests are rejected, then
+requires gradual recovery to 3. Processes and scratch files are cleaned up on
+exit; the report is written to `artifacts/backpressure-smoke.json`. This Docker
+test is not included in the coverage gate; regular tests cover the domain, real
+HTTP, SQLite, and SIGTERM.
 
-Para usarlo con un backend propio en `127.0.0.1:18081`, Envoy escucha en
-`127.0.0.1:18080` y su admin en `127.0.0.1:9901`:
+To use it with your own backend at `127.0.0.1:18081`, Envoy listens on
+`127.0.0.1:18080` and its admin on `127.0.0.1:9901`:
 
 ```sh
 docker run --rm --network host --user 10001:10001 --entrypoint envoy \
@@ -118,7 +119,7 @@ docker run --rm --network host --user 10001:10001 --entrypoint envoy \
   --concurrency 1 --disable-hot-restart
 ```
 
-En otro proceso:
+In another process:
 
 ```sh
 cargo run --bin backpressure-agent -- run --cluster orders \
@@ -126,40 +127,42 @@ cargo run --bin backpressure-agent -- run --cluster orders \
 cargo run --bin backpressure-agent -- history --database data/backpressure.db
 ```
 
-`--dry-run` guarda propuestas sin escribir runtime. `--once` toma una sola
-muestra: como no conserva una linea base entre procesos, no demuestra una
-mitigacion. La prueba de carga debe ejercitar el proceso continuo o varios ticks
-de un mismo controlador. Consultar `run --help` para configurar los limites.
+`--dry-run` saves proposals without writing runtime. `--once` takes a single
+sample: because it does not retain a baseline between processes, it does not
+demonstrate mitigation. The load test must exercise the continuous process or
+multiple ticks of the same controller. See `run --help` to configure limits.
 
 ## Kubernetes
 
-`deploy/backpressure` es un ejemplo Kustomize de gateway Envoy con el mitigador
-como contenedor separado. El investigador sigue desplegandose por su cuenta.
+`deploy/backpressure` is a Kustomize example of an Envoy gateway with the
+mitigator in a separate container. The investigator remains independently
+deployed.
 
-1. Reconstruir y publicar/cargar la imagen del proyecto, que ahora contiene
-   ambos binarios. El tag local anterior no contiene el mitigador.
-2. Configurar en `envoy-kubernetes.json` el DNS y puerto del Service backend
-   real. El valor de ejemplo es `orders-backend:8000` en el mismo namespace.
-3. Revisar tiempos y limites para ese backend y elegir una StorageClass local
-   compatible con SQLite WAL; no usar NFS ni varios escritores.
-4. Renderizar y revisar `kubectl kustomize deploy/backpressure`.
-5. Aplicar en un namespace de pruebas y enviar el trafico a
-   `orders-protected:8000`, no directamente al backend.
+1. Rebuild and publish/load the project image, which now contains both binaries.
+   The previous local tag does not contain the mitigator.
+2. Set the DNS name and port of the real backend Service in
+   `envoy-kubernetes.json`. The example value is `orders-backend:8000` in the
+   same namespace.
+3. Review timings and limits for that backend and choose a local StorageClass
+   compatible with SQLite WAL; do not use NFS or multiple writers.
+4. Render and review `kubectl kustomize deploy/backpressure`.
+5. Apply it in a test namespace and send traffic to `orders-protected:8000`,
+   not directly to the backend.
 
-El admin permanece en `127.0.0.1:9901` y no figura en ningun Service. Los
-contenedores no montan credenciales de Kubernetes y ejecutan como UID 10001,
-sin capabilities ni root filesystem escribible. El ejemplo no se ha aplicado
-en un cluster real. La readiness TCP solo confirma que Envoy escucha, no que el
-backend o el controlador esten sanos.
+The admin remains at `127.0.0.1:9901` and is not included in any Service.
+Containers do not mount Kubernetes credentials and run as UID 10001, without
+capabilities or a writable root filesystem. The example has not been applied
+in a real cluster. TCP readiness only confirms that Envoy is listening, not that
+the backend or controller is healthy.
 
-## Alcance pendiente
+## Future Scope
 
-No hay aun adaptadores de RabbitMQ/Kafka, control de productores, HPA, cambio
-de dependencia, planes LLM de mitigacion ni activacion por un incidente del
-investigador. Tampoco se detecta si un 5xx es un bug funcional o saturacion:
-esta politica limita su impacto observable y conserva evidencia para estudiar
-la causa. Streaming y trafico con muy pocas respuestas requieren otras senales.
+There are no RabbitMQ/Kafka adapters, producer control, HPA, dependency switching,
+LLM mitigation plans, or activation by an investigator incident yet. This version
+also does not determine whether a 5xx is a functional bug or saturation: the
+policy limits its observable impact and retains evidence to investigate the
+cause. Streaming and traffic with very few responses require other signals.
 
-Referencias: [Envoy circuit breakers](https://www.envoyproxy.io/docs/envoy/v1.39.3/configuration/upstream/cluster_manager/cluster_circuit_breakers),
-[administracion](https://www.envoyproxy.io/docs/envoy/v1.39.3/operations/admin),
-[estadisticas](https://www.envoyproxy.io/docs/envoy/v1.39.3/configuration/upstream/cluster_manager/cluster_stats).
+References: [Envoy circuit breakers](https://www.envoyproxy.io/docs/envoy/v1.39.3/configuration/upstream/cluster_manager/cluster_circuit_breakers),
+[administration](https://www.envoyproxy.io/docs/envoy/v1.39.3/operations/admin),
+[statistics](https://www.envoyproxy.io/docs/envoy/v1.39.3/configuration/upstream/cluster_manager/cluster_stats).

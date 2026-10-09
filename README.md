@@ -1,44 +1,44 @@
 # kube-bug-agent
 
-Primer agente Rust para detectar incidentes en aplicaciones y Deployments de
-Kubernetes, persistir evidencia en SQLite y proponer un diagnostico con un LLM
-compatible con OpenAI Chat Completions. La inferencia inicial utiliza el modelo
-Qwen local mediante llama.cpp; no necesita una clave de OpenAI. El proyecto es
-un prototipo: registra fallos observables y propone hipotesis, no demuestra bugs
-funcionales ni corrige recursos automaticamente.
+An initial Rust agent that detects incidents in applications and Kubernetes
+Deployments, persists evidence in SQLite, and proposes a diagnosis using an LLM
+compatible with OpenAI Chat Completions. Initial inference uses a local Qwen
+model through llama.cpp; no OpenAI key is required. This project is a prototype:
+it records observable failures and proposes hypotheses, but does not prove
+functional bugs or automatically fix resources.
 
-La arquitectura, el modelo de dominio y los flujos estan en
+The architecture, domain model, and workflows are described in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
-El mitigador separado `backpressure-agent` controla limites de concurrencia HTTP
-en Envoy, con recuperacion gradual y auditoria SQLite. Su arquitectura,
-prueba de carga real y despliegue estan en [BACKPRESSURE.md](BACKPRESSURE.md).
-El investigador mantiene su comportamiento de solo lectura.
+The separate `backpressure-agent` mitigator controls HTTP concurrency limits in
+Envoy, with gradual recovery and SQLite auditing. Its architecture, real load
+test, and deployment are described in [BACKPRESSURE.md](BACKPRESSURE.md).
+The investigator retains its read-only behavior.
 
-## Estructura
+## Structure
 
-- `src/domain`: agregado `Incident`, transiciones de analisis y objetos de valor
-  validados. Identidades, firmas, evidencias, contadores y diagnosticos tienen
-  tipos propios. Las evidencias se filtran al construirse.
-- `src/application`: casos de uso para ingerir, recopilar, analizar y entregar
-  observaciones. Dependen de puertos y dominio.
-- `src/ports`: repositorio de incidentes, proveedor de diagnostico, fuente de
-  observaciones, bandeja de salida y destino de observaciones.
-- `src/adapters`: SQLite, Kubernetes, HTTP, archivos y conector OpenAI-compatible.
-  Los DTO de transporte estan en `wire`; cada archivo contiene un tipo principal.
-  El adaptador de logs traduce JSON a `ApplicationLog`, `LogLevel` y `HttpStatus`;
-  las reglas de deteccion no conocen el formato del archivo.
-- `src/cli`: configuracion y composicion de dependencias.
+- `src/domain`: the `Incident` aggregate, analysis transitions, and validated
+  value objects. Identities, signatures, evidence, counters, and diagnoses have
+  dedicated types. Evidence is redacted when constructed.
+- `src/application`: use cases for ingesting, collecting, analyzing, and
+  delivering observations. They depend on ports and the domain.
+- `src/ports`: incident repository, diagnosis provider, observation source,
+  outbox, and observation sink.
+- `src/adapters`: SQLite, Kubernetes, HTTP, files, and an OpenAI-compatible
+  connector. Transport DTOs live in `wire`; each file contains one primary type.
+  The log adapter converts JSON into `ApplicationLog`, `LogLevel`, and
+  `HttpStatus`; detection rules do not know the file format.
+- `src/cli`: configuration and dependency composition.
 
-El agregado agrupa errores por propietario, revision, contenedor, detector y
-firma normalizada. Cada ocurrencia conserva un ID idempotente y su evidencia.
-Un mismo ID con otro contenido se rechaza. El analisis pasa por pendiente,
-procesando, completo o fallido; admite tres intentos con espera creciente y
-recupera trabajos interrumpidos al abrir la base de datos.
+The aggregate groups errors by owner, revision, container, detector, and
+normalized signature. Each occurrence retains an idempotent ID and its evidence.
+Reusing an ID with different content is rejected. Analysis moves through pending,
+processing, complete, or failed states; it allows three attempts with increasing
+backoff and recovers interrupted work when the database is opened.
 
-## CI local
+## Local CI
 
-Requisitos: Linux, Rust >=1.89, make, ripgrep, cargo-llvm-cov y llvm-tools-preview.
+Requirements: Linux, Rust >=1.89, make, ripgrep, cargo-llvm-cov, and llvm-tools-preview.
 
 ```sh
 rustup component add rustfmt clippy llvm-tools-preview
@@ -49,24 +49,24 @@ cargo install cargo-llvm-cov --locked
 make ci
 ```
 
-Verifica las dependencias entre capas, un tipo principal por archivo, formato,
-Clippy sin warnings y cobertura de lineas >=80%. Los tests usan servidores HTTP
-locales y SQLite real. La cobertura no depende del modelo local ni excluye capas
-de produccion. El informe queda en `artifacts/coverage.json`.
+Checks dependencies between layers, one primary type per file, formatting,
+Clippy with no warnings, and line coverage >=80%. Tests use local HTTP servers
+and real SQLite. Coverage does not depend on the local model and does not exclude
+production layers. The report is written to `artifacts/coverage.json`.
 
 ```sh
 make smoke-local
 ```
 
-Ejecuta sidecar -> HTTP -> SQLite -> modelo local -> diagnostico persistido.
-Descubre el modelo en `http://127.0.0.1:8080/v1/models`, valida su respuesta y
-escribe `artifacts/local-smoke.json`. `LOCAL_LLM_BASE_URL` permite elegir otro
-servidor local. Esta prueba necesita un servidor compatible con JSON mode ya
-arrancado; no descarga ni instala modelos. El scratch de tests vive en `tmp/`
-y se limpia al salir. Los informes, bases de datos, builds y configuraciones
-locales estan excluidos de git.
+Runs sidecar -> HTTP -> SQLite -> local model -> persisted diagnosis.
+Discovers the model at `http://127.0.0.1:8080/v1/models`, validates its response,
+and writes `artifacts/local-smoke.json`. Use `LOCAL_LLM_BASE_URL` to select another
+local server. This test requires an already running server that supports JSON
+mode; it does not download or install models. Test scratch files live in `tmp/`
+and are cleaned up on exit. Reports, databases, builds, and local configuration
+are excluded from git.
 
-## Ejecutar en local
+## Run Locally
 
 Terminal 1:
 
@@ -85,12 +85,12 @@ cargo run -- sidecar --logs tests/fixtures/application.jsonl \
 curl --fail http://127.0.0.1:8787/v1/incidents
 ```
 
-El colector devuelve la confirmacion despues del commit; el sidecar elimina el
-elemento de su bandeja de salida solo despues de recibir esa confirmacion.
-Ambos procesos atienden `SIGTERM` y Ctrl+C; el sidecar intenta entregar pendientes
-durante tres segundos al apagar y conserva lo restante en su bandeja de salida.
+The collector returns an acknowledgment after committing; the sidecar removes
+an item from its outbox only after receiving that acknowledgment. Both processes
+handle `SIGTERM` and Ctrl+C; during shutdown, the sidecar attempts to deliver
+pending items for three seconds and retains the rest in its outbox.
 
-Tambien puedes analizar fixtures de Kubernetes sin un cluster:
+You can also analyze Kubernetes fixtures without a cluster:
 
 ```sh
 cargo run -- scan --fixture tests/fixtures/deployment-failures.json
@@ -98,67 +98,69 @@ cargo run -- analyze --limit 1 --disable-thinking
 cargo run -- incidents --namespace demo --deployment orders
 ```
 
-`collector --namespace demo` activa la recopilacion de Kubernetes. Usa la
-configuracion in-cluster o el kubeconfig local. Solo observa recursos con
-`bug-agent.io/enabled=true` y relaciona Pod -> ReplicaSet -> Deployment por UID.
-El intervalo inicial es 30 segundos, configurable con `--poll-seconds`.
+`collector --namespace demo` enables Kubernetes collection. It uses in-cluster
+configuration or the local kubeconfig. It only observes resources labeled
+`bug-agent.io/enabled=true` and correlates Pod -> ReplicaSet -> Deployment by UID.
+The default interval is 30 seconds, configurable with `--poll-seconds`.
 
-El sidecar procesa logs JSONL con `level`, `message`/`msg`, `time`/`timestamp` y
-opcionalmente `status`/`status_code`. Detecta errores, panics y HTTP 5xx. Una
-comprobacion `--health-url http://127.0.0.1:8000/health` produce un hallazgo tras
-tres fallos consecutivos, con 60 segundos de gracia inicial.
+The sidecar processes JSONL logs with `level`, `message`/`msg`, `time`/`timestamp`,
+and optionally `status`/`status_code`. It detects errors, panics, and HTTP 5xx.
+A `--health-url http://127.0.0.1:8000/health` check produces a finding after
+three consecutive failures, with an initial 60-second grace period.
 
-## Conector LLM
+## LLM Connector
 
-- `LLM_BASE_URL` / `--llm-base-url`: URL base que incluye `/v1`.
-- `LLM_MODEL` / `--llm-model`: modelo; si se omite, descubre el primero disponible.
-- `LLM_API_KEY`: credencial opcional; se lee del entorno, no se imprime ni se
-  escribe en archivos. No se reutiliza automaticamente `OPENAI_API_KEY`.
-- `--disable-thinking`: extension de llama.cpp para estas pruebas Qwen. Omitir
-  al usar un proveedor que no admita `chat_template_kwargs`.
+- `LLM_BASE_URL` / `--llm-base-url`: base URL including `/v1`.
+- `LLM_MODEL` / `--llm-model`: model; when omitted, discovers the first available.
+- `LLM_API_KEY`: optional credential read from the environment, never printed or
+  written to files. `OPENAI_API_KEY` is not automatically reused.
+- `--disable-thinking`: llama.cpp extension for these Qwen tests. Omit it when
+  using a provider that does not support `chat_template_kwargs`.
 
-Utiliza `POST /chat/completions`, JSON mode y validacion local del esquema y de
-las referencias a evidencia. El modelo propone causas y comprobaciones; no
-ejecuta herramientas, modifica recursos ni confirma un bug funcional. El
-fallo del LLM conserva el incidente y su evidencia para reintentar el analisis.
+Uses `POST /chat/completions`, JSON mode, and local validation of the schema and
+evidence references. The model proposes causes and checks; it does not execute
+tools, modify resources, or confirm a functional bug. An LLM failure preserves
+the incident and its evidence so analysis can be retried.
 
 ## Kubernetes
 
-`deploy/kubernetes.yaml` contiene un ejemplo para Kubernetes >=1.33: colector
-StatefulSet de una replica con PVC, RBAC de lectura y una aplicacion con sidecar
-nativo. Antes de aplicarlo:
+`deploy/kubernetes.yaml` contains an example for Kubernetes >=1.33: a single-replica
+collector StatefulSet with a PVC, read-only RBAC, and an application with a native
+sidecar. Before applying it:
 
-1. Construir y publicar/cargar la imagen `kube-bug-agent:0.1.0` con el Dockerfile.
-2. Crear el namespace `bug-demo` y el Secret `bug-agent-auth`, clave `token`, con
-   una credencial propia. El manifiesto no contiene credenciales.
-3. Configurar `bug-agent-llm.LLM_BASE_URL` con un endpoint accesible desde el pod.
-   `127.0.0.1` en ese pod no es este PC.
-4. Elegir una StorageClass respaldada por bloque y filesystem local; SQLite WAL
-   no admite NFS. Mantener un unico colector escritor.
+1. Build and publish/load the `kube-bug-agent:0.1.0` image using the Dockerfile.
+2. Create the `bug-demo` namespace and the `bug-agent-auth` Secret, with a `token`
+   key containing your own credential. The manifest contains no credentials.
+3. Set `bug-agent-llm.LLM_BASE_URL` to an endpoint reachable from the pod.
+   `127.0.0.1` inside that pod is not this PC.
+4. Choose a block-backed StorageClass with a local filesystem; SQLite WAL does
+   not support NFS. Keep a single writer collector.
 
-`AGENT_TOKEN` protege las rutas `/v1/*` con Bearer auth; es obligatorio al escuchar
-fuera de loopback. El ejemplo usa HTTP interno: usar TLS o un mesh cuando la red
-del cluster no sea de confianza. `/healthz` y `/readyz` son probes sin token.
+`AGENT_TOKEN` protects `/v1/*` routes with Bearer authentication; it is required
+when listening outside loopback. The example uses internal HTTP: use TLS or a
+mesh when the cluster network is untrusted. `/healthz` and `/readyz` are probes
+that do not require a token.
 
-## Limites del primer prototipo
+## Initial Prototype Limitations
 
-- La recopilacion de Kubernetes usa polling, no watch; puede perder estados
-  breves. El manifiesto de ejemplo aun no se ha validado en un cluster real.
-- Los logs deben estar en un volumen compartido; el sidecar no ve el stdout
-  de la aplicacion automaticamente. Lineas invalidas o >32 KiB se descartan.
-- La cola tiene un limite de 1000 hallazgos. Al llenarse, detiene la lectura
-  sin avanzar el cursor. Rotaciones multiples o truncados entre sondeos pueden
-  perder contenido; eliminar el pod elimina una cola alojada en emptyDir.
-- Se conserva el primer diagnostico por incidente; las siguientes ocurrencias
-  suman evidencia. No hay resolucion automatica, retencion ni alta disponibilidad.
-- El filtrado de credenciales es preventivo y no garantiza detectar todo dato
-  sensible. No enviar logs de produccion a un proveedor sin revisar su contenido.
+- Kubernetes collection uses polling, not watches; it can miss short-lived
+  states. The example manifest has not yet been validated in a real cluster.
+- Logs must be in a shared volume; the sidecar does not automatically see the
+  application stdout. Invalid lines or lines >32 KiB are discarded.
+- The queue is limited to 1000 findings. When full, it stops reading without
+  advancing the cursor. Multiple rotations or truncations between polls can
+  lose content; deleting the pod deletes a queue hosted in emptyDir.
+- The first diagnosis is retained per incident; subsequent occurrences add
+  evidence. There is no automatic resolution, retention, or high availability.
+- Credential redaction is preventive and does not guarantee detection of all
+  sensitive data. Do not send production logs to a provider without reviewing
+  their content.
 
-## Licencia
+## License
 
 [MIT](LICENSE).
 
-Referencias de protocolo: [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create),
+Protocol references: [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create),
 [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md),
 [Kubernetes sidecars](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/),
 [SQLite WAL](https://www.sqlite.org/wal.html).
