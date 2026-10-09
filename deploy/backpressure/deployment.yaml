@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backpressure-audit
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backpressure-gateway
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: backpressure-gateway
+  template:
+    metadata:
+      labels:
+        app: backpressure-gateway
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: envoy
+          image: envoyproxy/envoy:v1.39.3@sha256:dd85940439de19a0b6ae8419610363ea0ad351d9a994ea007161c206ec1e1865
+          command: [envoy]
+          args: [-c, /etc/envoy/envoy.json, --concurrency, "1", --disable-hot-restart]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: proxy
+              containerPort: 18080
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/envoy
+              readOnly: true
+            - name: envoy-tmp
+              mountPath: /tmp
+        - name: mitigator
+          image: kube-bug-agent:0.1.0
+          command: [backpressure-agent]
+          args: [run, --envoy-admin, "http://127.0.0.1:9901", --cluster, orders, --database, /data/backpressure.db, --min-concurrency, "1", --max-concurrency, "16"]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          volumeMounts:
+            - name: audit
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: backpressure-envoy
+        - name: audit
+          persistentVolumeClaim:
+            claimName: backpressure-audit
+        - name: envoy-tmp
+          emptyDir:
+            sizeLimit: 32Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-protected
+spec:
+  selector:
+    app: backpressure-gateway
+  ports:
+    - name: http
+      port: 8000
+      targetPort: proxy

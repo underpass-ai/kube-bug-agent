@@ -10,6 +10,11 @@ funcionales ni corrige recursos automaticamente.
 La arquitectura, el modelo de dominio y los flujos estan en
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
+El mitigador separado `backpressure-agent` controla limites de concurrencia HTTP
+en Envoy, con recuperacion gradual y auditoria SQLite. Su arquitectura,
+prueba de carga real y despliegue estan en [BACKPRESSURE.md](BACKPRESSURE.md).
+El investigador mantiene su comportamiento de solo lectura.
+
 ## Estructura
 
 - `src/domain`: agregado `Incident`, transiciones de analisis y objetos de valor

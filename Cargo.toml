@@ -1,5 +1,6 @@
 [package]
 name = "kube-bug-agent"
+default-run = "kube-bug-agent"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"

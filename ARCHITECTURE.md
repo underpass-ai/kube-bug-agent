@@ -142,6 +142,11 @@ limitado a un namespace; el sidecar no necesita credenciales de Kubernetes.
 
 ## Verificacion y limites
 
+El mitigador `backpressure-agent` es otro binario y un contexto independiente
+en `src/backpressure`, con sus propias capas de dominio, aplicacion, puertos y
+adaptadores. Controla Envoy, no modifica el investigador ni su RBAC. La politica
+y los limites de actuacion estan en [BACKPRESSURE.md](BACKPRESSURE.md).
+
 `make ci` comprueba dependencias entre capas, un tipo principal por archivo,
 formato, Clippy y cobertura de lineas >=80%, sin excluir capas de produccion.
 Los tests cubren invariantes, SQLite real, servidores HTTP locales, Kubernetes

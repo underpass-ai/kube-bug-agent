@@ -1,6 +1,5 @@
 pub mod adapters;
 pub mod application;
-pub mod backpressure;
 pub mod cli;
 pub mod domain;
 pub mod ports;
