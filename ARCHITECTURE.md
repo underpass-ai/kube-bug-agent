@@ -149,6 +149,9 @@ The policy and actuation limits are described in [BACKPRESSURE.md](BACKPRESSURE.
 
 `make ci` checks dependencies between layers, one primary type per file,
 formatting, Clippy, and line coverage >=80%, without excluding production layers.
+It also runs Helm linting and structured chart render tests. The chart in
+`charts/kube-bug-agent` deploys each enabled agent as a separate single-replica
+StatefulSet, with retained database claims and no application-sidecar injection.
 Tests cover invariants, real SQLite, local HTTP servers, simulated Kubernetes,
 retries, backpressure, rotation, probes, and binary shutdown. `make smoke-local`
 adds real inference using a locally installed model.

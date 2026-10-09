@@ -1,0 +1,107 @@
+{{- if .Values.backpressure.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kube-bug-agent.fullname" . }}-backpressure
+  labels:
+    {{- include "kube-bug-agent.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "kube-bug-agent.fullname" . }}-backpressure-headless
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      {{- include "kube-bug-agent.selectorLabels" (dict "root" . "component" "backpressure") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/envoy: {{ include "kube-bug-agent.envoy" . | sha256sum }}
+      labels:
+        {{- include "kube-bug-agent.selectorLabels" (dict "root" . "component" "backpressure") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        {{- include "kube-bug-agent.podSecurity" . | nindent 8 }}
+      {{- include "kube-bug-agent.scheduling" . | nindent 6 }}
+      containers:
+        - name: envoy
+          image: {{ include "kube-bug-agent.image" .Values.backpressure.envoy | quote }}
+          imagePullPolicy: {{ .Values.backpressure.envoy.pullPolicy }}
+          command: [envoy]
+          args: [-c, /etc/envoy/envoy.json, --concurrency, "1", --disable-hot-restart]
+          securityContext:
+            {{- include "kube-bug-agent.containerSecurity" . | nindent 12 }}
+          ports:
+            - name: proxy
+              containerPort: 18080
+          readinessProbe:
+            tcpSocket: {port: proxy}
+          resources:
+            {{- toYaml .Values.backpressure.envoy.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/envoy
+              readOnly: true
+            - name: envoy-tmp
+              mountPath: /tmp
+        - name: mitigator
+          image: {{ include "kube-bug-agent.image" .Values.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [backpressure-agent]
+          args:
+            - run
+            - --envoy-admin
+            - http://127.0.0.1:9901
+            - --cluster
+            - {{ .Values.backpressure.cluster | quote }}
+            - --database
+            - /data/backpressure.db
+            - --min-concurrency
+            - {{ .Values.backpressure.policy.minConcurrency | quote }}
+            - --max-concurrency
+            - {{ .Values.backpressure.policy.maxConcurrency | quote }}
+            - --latency-ms
+            - {{ .Values.backpressure.policy.latencyMs | quote }}
+            - --error-ratio
+            - {{ .Values.backpressure.policy.errorRatio | quote }}
+            - --min-samples
+            - {{ .Values.backpressure.policy.minSamples | quote }}
+            - --healthy-windows
+            - {{ .Values.backpressure.policy.healthyWindows | quote }}
+            - --cooldown-seconds
+            - {{ .Values.backpressure.policy.cooldownSeconds | quote }}
+            - --poll-seconds
+            - {{ .Values.backpressure.policy.pollSeconds | quote }}
+            {{- if .Values.backpressure.policy.dryRun }}
+            - --dry-run
+            {{- end }}
+          securityContext:
+            {{- include "kube-bug-agent.containerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.backpressure.resources | nindent 12 }}
+          volumeMounts:
+            - name: audit
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kube-bug-agent.fullname" . }}-backpressure-envoy
+        - name: envoy-tmp
+          emptyDir:
+            sizeLimit: 16Mi
+        {{- if .Values.backpressure.persistence.existingClaim }}
+        - name: audit
+          persistentVolumeClaim:
+            claimName: {{ .Values.backpressure.persistence.existingClaim | quote }}
+        {{- end }}
+  {{- if not .Values.backpressure.persistence.existingClaim }}
+  volumeClaimTemplates:
+    - metadata:
+        name: audit
+      spec:
+        {{- include "kube-bug-agent.claim" .Values.backpressure.persistence | nindent 8 }}
+  {{- end }}
+{{- end }}

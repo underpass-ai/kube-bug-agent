@@ -1,0 +1,11 @@
+{{- if .Values.backpressure.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kube-bug-agent.fullname" . }}-backpressure-envoy
+  labels:
+    {{- include "kube-bug-agent.labels" . | nindent 4 }}
+data:
+  envoy.json: |
+    {{- include "kube-bug-agent.envoy" . | nindent 4 }}
+{{- end }}

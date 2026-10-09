@@ -1,0 +1,14 @@
+{{- $name := include "kube-bug-agent.fullname" . -}}
+{{- if .Values.investigator.enabled }}
+Investigator: http://{{ $name }}-collector.{{ .Release.Namespace }}.svc:8787
+Required existing Secret: {{ .Values.investigator.auth.existingSecret }} (key {{ .Values.investigator.auth.key }})
+Add application sidecars separately; the chart does not inject containers.
+{{ if not .Values.investigator.llm.baseUrl }}LLM analysis is disabled; configure investigator.llm.baseUrl to enable it.{{ end }}
+{{- end }}
+{{- if .Values.backpressure.enabled }}
+Protected backend: http://{{ $name }}-backpressure.{{ .Release.Namespace }}.svc:{{ .Values.backpressure.service.port }}
+Send traffic through this gateway. Envoy admin is loopback-only.
+TCP readiness does not prove backend or mitigator health.
+{{- end }}
+Both agents use single-writer SQLite. Do not scale their StatefulSets.
+Generated database PVCs are retained on uninstall; back them up and remove them only deliberately.

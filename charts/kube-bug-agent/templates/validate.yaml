@@ -1,0 +1,20 @@
+{{- if not (or .Values.investigator.enabled .Values.backpressure.enabled) -}}
+{{- fail "Enable investigator, backpressure, or both" -}}
+{{- end -}}
+{{- if .Values.investigator.enabled -}}
+{{- if and .Values.investigator.llm.existingSecret (not .Values.investigator.llm.baseUrl) -}}
+{{- fail "investigator.llm.baseUrl is required when an LLM Secret is configured" -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.backpressure.enabled -}}
+{{- $policy := .Values.backpressure.policy -}}
+{{- if or (gt (int $policy.minConcurrency) (int $policy.initialConcurrency)) (gt (int $policy.initialConcurrency) (int $policy.maxConcurrency)) -}}
+{{- fail "Concurrency must satisfy minConcurrency <= initialConcurrency <= maxConcurrency" -}}
+{{- end -}}
+{{- $gateway := printf "%s-backpressure" (include "kube-bug-agent.fullname" .) -}}
+{{- $host := .Values.backpressure.backend.host -}}
+{{- $first := first (splitList "." $host) -}}
+{{- if or (eq $first $gateway) (eq $first (printf "%s-headless" $gateway)) (eq $first (printf "%s-0" $gateway)) -}}
+{{- fail "backpressure.backend.host must not point to the gateway itself" -}}
+{{- end -}}
+{{- end -}}

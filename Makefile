@@ -1,6 +1,6 @@
-.PHONY: ci fmt lint test coverage architecture build smoke-local smoke-backpressure
+.PHONY: ci fmt lint test coverage architecture build smoke-local smoke-backpressure helm helm-package smoke-helm
 
-ci: architecture fmt lint coverage
+ci: architecture fmt lint coverage helm
 
 architecture:
 	bash scripts/check-architecture.sh
@@ -26,3 +26,13 @@ smoke-local:
 
 smoke-backpressure:
 	cargo test --test live_envoy -- --ignored --nocapture
+
+helm:
+	python3 scripts/test-helm.py
+
+helm-package: helm
+	mkdir -p artifacts/helm
+	helm package charts/kube-bug-agent --destination artifacts/helm
+
+smoke-helm:
+	HELM_ENVOY_SMOKE=1 python3 scripts/test-helm.py HelmChartTests.test_envoy_bootstrap_is_validated_by_real_envoy

@@ -1,0 +1,81 @@
+# fullnameOverride overrides the resource prefix; empty uses the release name.
+fullnameOverride: ""
+image:
+  # Build and publish/load this image before installing the chart.
+  repository: kube-bug-agent
+  tag: "0.1.0"
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+investigator:
+  enabled: true
+  # Create this Secret separately; credentials never belong in Helm values.
+  auth:
+    existingSecret: bug-agent-auth
+    key: token
+  kubernetes:
+    enabled: true
+    # Observation stays within the release namespace.
+    selector: bug-agent.io/enabled=true
+    pollSeconds: 30
+  llm:
+    # Empty disables analysis while incident collection remains available.
+    baseUrl: ""
+    model: ""
+    disableThinking: false
+    existingSecret: ""
+    key: api-key
+  persistence:
+    existingClaim: ""
+    size: 1Gi
+    # Empty uses the default StorageClass; '-' disables dynamic provisioning.
+    storageClass: ""
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+backpressure:
+  enabled: false
+  cluster: orders
+  backend:
+    # Required when enabled: an existing backend Service DNS name, not this gateway.
+    host: ""
+    port: 8000
+  service:
+    port: 8000
+  envoy:
+    repository: envoyproxy/envoy
+    tag: v1.39.3
+    digest: sha256:dd85940439de19a0b6ae8419610363ea0ad351d9a994ea007161c206ec1e1865
+    pullPolicy: IfNotPresent
+    connectTimeout: 0.5s
+    requestTimeout: 2s
+    routeTimeout: 1s
+    streamIdleTimeout: 5s
+    maxPendingRequests: 2
+    maxConnections: 16
+    resources:
+      requests: {cpu: 50m, memory: 64Mi}
+      limits: {cpu: 500m, memory: 256Mi}
+  policy:
+    initialConcurrency: 8
+    minConcurrency: 1
+    maxConcurrency: 16
+    latencyMs: 200
+    errorRatio: 0.1
+    minSamples: 10
+    healthyWindows: 3
+    cooldownSeconds: 5
+    pollSeconds: 2
+    dryRun: false
+  persistence:
+    existingClaim: ""
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}

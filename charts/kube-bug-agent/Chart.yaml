@@ -1,0 +1,11 @@
+apiVersion: v2
+name: kube-bug-agent
+description: Read-only Kubernetes incident investigation and optional Envoy backpressure mitigation
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.33.0-0"
+home: https://github.com/underpass-ai/kube-bug-agent
+sources:
+  - https://github.com/underpass-ai/kube-bug-agent
+keywords: [kubernetes, incidents, backpressure, envoy]
