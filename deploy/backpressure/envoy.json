@@ -1,0 +1,52 @@
+{
+  "admin": {
+    "address": {"socket_address": {"address": "127.0.0.1", "port_value": 9901}},
+    "allow_paths": [{"exact": "/ready"}, {"prefix": "/stats?"}, {"exact": "/runtime"}, {"prefix": "/runtime_modify?"}]
+  },
+  "stats_flush_on_admin": true,
+  "layered_runtime": {
+    "layers": [
+      {"name": "static", "static_layer": {
+        "circuit_breakers.orders.default.max_requests": 8,
+        "envoy.reloadable_features.skip_pending_overflow_count_on_active_rq": false
+      }},
+      {"name": "admin", "admin_layer": {}}
+    ]
+  },
+  "static_resources": {
+    "listeners": [{
+      "name": "protected_orders",
+      "address": {"socket_address": {"address": "127.0.0.1", "port_value": 18080}},
+      "filter_chains": [{"filters": [{
+        "name": "envoy.filters.network.http_connection_manager",
+        "typed_config": {
+          "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+          "stat_prefix": "protected_orders",
+          "request_timeout": "2s",
+          "stream_idle_timeout": "5s",
+          "route_config": {
+            "name": "orders",
+            "virtual_hosts": [{"name": "orders", "domains": ["*"], "routes": [{
+              "match": {"prefix": "/"},
+              "route": {"cluster": "orders", "timeout": "1s"}
+            }]}]
+          },
+          "http_filters": [{
+            "name": "envoy.filters.http.router",
+            "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}
+          }]
+        }
+      }]}]
+    }],
+    "clusters": [{
+      "name": "orders",
+      "type": "STATIC",
+      "connect_timeout": "0.5s",
+      "circuit_breakers": {"thresholds": [{"priority": "DEFAULT", "max_requests": 8, "max_pending_requests": 2, "max_connections": 16, "max_retries": 0}]},
+      "load_assignment": {
+        "cluster_name": "orders",
+        "endpoints": [{"lb_endpoints": [{"endpoint": {"address": {"socket_address": {"address": "127.0.0.1", "port_value": 18081}}}}]}]
+      }
+    }]
+  }
+}

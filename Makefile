@@ -1,4 +1,4 @@
-.PHONY: ci fmt lint test coverage architecture build smoke-local
+.PHONY: ci fmt lint test coverage architecture build smoke-local smoke-backpressure
 
 ci: architecture fmt lint coverage
 
@@ -23,3 +23,6 @@ build:
 
 smoke-local:
 	cargo test --test live_local -- --ignored --nocapture
+
+smoke-backpressure:
+	cargo test --test live_envoy -- --ignored --nocapture

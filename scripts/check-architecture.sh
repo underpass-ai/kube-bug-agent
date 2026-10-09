@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if rg -n '\b(adapters|cli|application|ports|reqwest|rusqlite|kube|k8s_openapi|axum|tokio)::' src/domain; then
+if rg -n '\b(adapters|cli|application|ports|reqwest|rusqlite|kube|k8s_openapi|axum|tokio)::' src/domain src/backpressure/domain; then
     echo 'Domain must not depend on application, ports or adapters' >&2
     exit 1
 fi
-if rg -n '\b(adapters|cli|reqwest|rusqlite|kube|k8s_openapi|axum)::' src/application src/ports; then
+if rg -n '\b(adapters|cli|reqwest|rusqlite|kube|k8s_openapi|axum)::' src/application src/ports src/backpressure/application src/backpressure/ports; then
     echo 'Application and ports must not depend on adapters or CLI' >&2
     exit 1
 fi
