@@ -39,6 +39,7 @@ backoff and recovers interrupted work when the database is opened.
 ## Local CI
 
 Requirements: Linux, Rust >=1.89, make, ripgrep, cargo-llvm-cov, and llvm-tools-preview.
+Chart checks also require Helm >=3.19, Python >=3.9, and PyYAML >=6.0.
 
 ```sh
 rustup component add rustfmt clippy llvm-tools-preview
@@ -122,7 +123,25 @@ evidence references. The model proposes causes and checks; it does not execute
 tools, modify resources, or confirm a functional bug. An LLM failure preserves
 the incident and its evidence so analysis can be retried.
 
-## Kubernetes
+## Helm Installation
+
+The [Helm chart](charts/kube-bug-agent/README.md) installs the investigator and
+optional backpressure gateway independently or together, with single-writer
+SQLite storage, namespace-scoped read RBAC, and existing Secret references.
+Build and publish/load the project image and create the authentication Secret
+before installing the investigator. The chart does not inject sidecars or
+deploy an LLM; its README covers setup, traffic routing, storage, and upgrades.
+
+```sh
+make helm
+make helm-package
+```
+
+`make ci` includes chart linting and render tests. `make smoke-helm` additionally
+validates the generated bootstrap with real Envoy. See the chart README for the
+installation commands and required values. No real cluster deployment is claimed.
+
+## Kubernetes Manifests
 
 `deploy/kubernetes.yaml` contains an example for Kubernetes >=1.33: a single-replica
 collector StatefulSet with a PVC, read-only RBAC, and an application with a native

@@ -1,0 +1,16 @@
+{{- if .Values.backpressure.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kube-bug-agent.fullname" . }}-backpressure-headless
+  labels:
+    {{- include "kube-bug-agent.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "kube-bug-agent.selectorLabels" (dict "root" . "component" "backpressure") | nindent 4 }}
+  ports:
+    - name: proxy
+      port: 18080
+      targetPort: proxy
+{{- end }}

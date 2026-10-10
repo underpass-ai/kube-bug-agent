@@ -89,7 +89,7 @@ rollback between SQLite and Envoy is not promised.
 On SIGTERM or Ctrl+C, the process exits and retains the protective limit;
 it does not automatically raise it during an outage. Admin overrides are lost
 if Envoy restarts, restoring the initial bootstrap value. A new agent starts
-with a new baseline. The example deployment uses one replica and `Recreate`;
+with a new baseline. The Kustomize deployment example uses one replica and `Recreate`;
 there is no multi-agent coordination or audit retention yet.
 
 ## Local Test
@@ -133,6 +133,13 @@ demonstrate mitigation. The load test must exercise the continuous process or
 multiple ticks of the same controller. See `run --help` to configure limits.
 
 ## Kubernetes
+
+The [Helm chart](charts/kube-bug-agent/README.md) provides a configurable install
+with a single-replica StatefulSet and retained audit PVC. Set
+`backpressure.enabled=true` and the existing backend DNS/port; disable
+`investigator.enabled` to install only the mitigator. It does not reroute callers
+or create the backend. The instructions below describe the separate Kustomize
+example, which uses a Deployment with `Recreate`.
 
 `deploy/backpressure` is a Kustomize example of an Envoy gateway with the
 mitigator in a separate container. The investigator remains independently

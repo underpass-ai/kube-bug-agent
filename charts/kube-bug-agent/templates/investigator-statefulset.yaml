@@ -1,0 +1,98 @@
+{{- if .Values.investigator.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kube-bug-agent.fullname" . }}-collector
+  labels:
+    {{- include "kube-bug-agent.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "kube-bug-agent.fullname" . }}-collector-headless
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      {{- include "kube-bug-agent.selectorLabels" (dict "root" . "component" "investigator") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kube-bug-agent.selectorLabels" (dict "root" . "component" "investigator") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "kube-bug-agent.fullname" . }}-collector
+      automountServiceAccountToken: {{ .Values.investigator.kubernetes.enabled }}
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        {{- include "kube-bug-agent.podSecurity" . | nindent 8 }}
+      {{- include "kube-bug-agent.scheduling" . | nindent 6 }}
+      containers:
+        - name: collector
+          image: {{ include "kube-bug-agent.image" .Values.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [kube-bug-agent]
+          args:
+            - collector
+            - --database
+            - /data/incidents.db
+            - --listen
+            - "0.0.0.0:8787"
+            {{- if .Values.investigator.kubernetes.enabled }}
+            - --namespace
+            - {{ .Release.Namespace | quote }}
+            - --selector
+            - {{ .Values.investigator.kubernetes.selector | quote }}
+            - --poll-seconds
+            - {{ .Values.investigator.kubernetes.pollSeconds | quote }}
+            {{- end }}
+            {{- if .Values.investigator.llm.disableThinking }}
+            - --disable-thinking
+            {{- end }}
+          env:
+            - name: AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.investigator.auth.existingSecret | quote }}
+                  key: {{ .Values.investigator.auth.key | quote }}
+            {{- if .Values.investigator.llm.baseUrl }}
+            - name: LLM_BASE_URL
+              value: {{ .Values.investigator.llm.baseUrl | quote }}
+            {{- end }}
+            {{- if .Values.investigator.llm.model }}
+            - name: LLM_MODEL
+              value: {{ .Values.investigator.llm.model | quote }}
+            {{- end }}
+            {{- if .Values.investigator.llm.existingSecret }}
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.investigator.llm.existingSecret | quote }}
+                  key: {{ .Values.investigator.llm.key | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8787
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          securityContext:
+            {{- include "kube-bug-agent.containerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.investigator.resources | nindent 12 }}
+          volumeMounts:
+            - name: database
+              mountPath: /data
+      {{- if .Values.investigator.persistence.existingClaim }}
+      volumes:
+        - name: database
+          persistentVolumeClaim:
+            claimName: {{ .Values.investigator.persistence.existingClaim | quote }}
+      {{- end }}
+  {{- if not .Values.investigator.persistence.existingClaim }}
+  volumeClaimTemplates:
+    - metadata:
+        name: database
+      spec:
+        {{- include "kube-bug-agent.claim" .Values.investigator.persistence | nindent 8 }}
+  {{- end }}
+{{- end }}

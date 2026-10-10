@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image", "investigator", "backpressure"],
+  "properties": {
+    "fullnameOverride": {"type": "string", "maxLength": 41, "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
+    "image": {"$ref": "#/definitions/image"},
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"$ref": "#/definitions/name"}}}
+    },
+    "nodeSelector": {"type": "object", "additionalProperties": {"type": "string"}},
+    "tolerations": {"type": "array", "items": {"type": "object"}},
+    "affinity": {"type": "object"},
+    "investigator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "auth", "kubernetes", "llm", "persistence", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "auth": {
+          "type": "object", "additionalProperties": false, "required": ["existingSecret", "key"],
+          "properties": {"existingSecret": {"$ref": "#/definitions/name"}, "key": {"$ref": "#/definitions/secretKey"}}
+        },
+        "kubernetes": {
+          "type": "object", "additionalProperties": false, "required": ["enabled", "selector", "pollSeconds"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "selector": {"type": "string", "minLength": 1},
+            "pollSeconds": {"type": "integer", "minimum": 1, "maximum": 86400}
+          }
+        },
+        "llm": {
+          "type": "object", "additionalProperties": false,
+          "required": ["baseUrl", "model", "disableThinking", "existingSecret", "key"],
+          "properties": {
+            "baseUrl": {"type": "string", "pattern": "^$|^https?://[^@\\s]+/v1/?$"},
+            "model": {"type": "string", "maxLength": 200},
+            "disableThinking": {"type": "boolean"},
+            "existingSecret": {"$ref": "#/definitions/optionalName"},
+            "key": {"$ref": "#/definitions/secretKey"}
+          }
+        },
+        "persistence": {"$ref": "#/definitions/persistence"},
+        "resources": {"$ref": "#/definitions/resources"}
+      }
+    },
+    "backpressure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "cluster", "backend", "service", "envoy", "policy", "persistence", "resources"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "cluster": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-]+$"},
+        "backend": {
+          "type": "object", "additionalProperties": false, "required": ["host", "port"],
+          "properties": {"host": {"type": "string", "maxLength": 253, "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"}, "port": {"$ref": "#/definitions/port"}}
+        },
+        "service": {
+          "type": "object", "additionalProperties": false, "required": ["port"],
+          "properties": {"port": {"$ref": "#/definitions/port"}}
+        },
+        "envoy": {
+          "type": "object", "additionalProperties": false,
+          "required": ["repository", "tag", "digest", "pullPolicy", "connectTimeout", "requestTimeout", "routeTimeout", "streamIdleTimeout", "maxPendingRequests", "maxConnections", "resources"],
+          "properties": {
+            "repository": {"type": "string", "minLength": 1},
+            "tag": {"type": "string", "minLength": 1},
+            "digest": {"$ref": "#/definitions/digest"},
+            "pullPolicy": {"$ref": "#/definitions/pullPolicy"},
+            "connectTimeout": {"$ref": "#/definitions/duration"},
+            "requestTimeout": {"$ref": "#/definitions/duration"},
+            "routeTimeout": {"$ref": "#/definitions/duration"},
+            "streamIdleTimeout": {"$ref": "#/definitions/duration"},
+            "maxPendingRequests": {"type": "integer", "minimum": 0, "maximum": 10000},
+            "maxConnections": {"type": "integer", "minimum": 1, "maximum": 10000},
+            "resources": {"$ref": "#/definitions/resources"}
+          }
+        },
+        "policy": {
+          "type": "object", "additionalProperties": false,
+          "required": ["initialConcurrency", "minConcurrency", "maxConcurrency", "latencyMs", "errorRatio", "minSamples", "healthyWindows", "cooldownSeconds", "pollSeconds", "dryRun"],
+          "properties": {
+            "initialConcurrency": {"$ref": "#/definitions/concurrency"},
+            "minConcurrency": {"$ref": "#/definitions/concurrency"},
+            "maxConcurrency": {"$ref": "#/definitions/concurrency"},
+            "latencyMs": {"type": "number", "minimum": 0, "maximum": 3600000},
+            "errorRatio": {"type": "number", "minimum": 0, "maximum": 1},
+            "minSamples": {"type": "integer", "minimum": 1, "maximum": 1000000000},
+            "healthyWindows": {"type": "integer", "minimum": 1, "maximum": 100},
+            "cooldownSeconds": {"type": "integer", "minimum": 1, "maximum": 300},
+            "pollSeconds": {"type": "integer", "minimum": 1, "maximum": 60},
+            "dryRun": {"type": "boolean"}
+          }
+        },
+        "persistence": {"$ref": "#/definitions/persistence"},
+        "resources": {"$ref": "#/definitions/resources"}
+      },
+      "allOf": [{
+        "if": {"properties": {"enabled": {"const": true}}},
+        "then": {"properties": {"backend": {"properties": {"host": {"minLength": 1}}}}}
+      }]
+    }
+  },
+  "definitions": {
+    "name": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"},
+    "optionalName": {"type": "string", "maxLength": 253, "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"},
+    "secretKey": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9_.-]+$"},
+    "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "concurrency": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "duration": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]{1,9})?s$"},
+    "digest": {"type": "string", "pattern": "^$|^sha256:[a-f0-9]{64}$"},
+    "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]},
+    "image": {
+      "type": "object", "additionalProperties": false, "required": ["repository", "tag", "digest", "pullPolicy"],
+      "properties": {"repository": {"type": "string", "minLength": 1}, "tag": {"type": "string", "minLength": 1}, "digest": {"$ref": "#/definitions/digest"}, "pullPolicy": {"$ref": "#/definitions/pullPolicy"}}
+    },
+    "persistence": {
+      "type": "object", "additionalProperties": false, "required": ["existingClaim", "size", "storageClass"],
+      "properties": {"existingClaim": {"$ref": "#/definitions/optionalName"}, "size": {"type": "string", "pattern": "^[1-9][0-9]*(Ki|Mi|Gi|Ti)$"}, "storageClass": {"anyOf": [{"$ref": "#/definitions/optionalName"}, {"const": "-"}]}},
+      "description": "Block-backed local filesystem storage is required for SQLite WAL; do not use NFS."
+    },
+    "resources": {"type": "object", "additionalProperties": false, "properties": {"requests": {"type": "object"}, "limits": {"type": "object"}}}
+  }
+}
